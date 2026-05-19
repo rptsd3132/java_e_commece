@@ -325,4 +325,6 @@ This project is open source. Feel free to use, modify, and share it.
 
 ---
 
-> Built with ❤️ using Java Spring Boot and React
+👨‍💻 Author
+
+R. P. T. Sandeepa Dilhara (computer engineer  and IT undergraduate student )
