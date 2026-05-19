@@ -1,7 +1,7 @@
 // Import React hooks for state management and side effects
 import { useState, useEffect } from 'react'
 // Import Link and useNavigate from react-router-dom for navigation
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 // Import the pre-configured axios instance (baseURL: http://localhost:8080, auto-attaches JWT)
 import api from '../../api/axiosConfig'
 

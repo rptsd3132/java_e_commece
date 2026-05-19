@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../../api/axios'
-import { useAuth } from '../../context/AuthContext'
 import { useCart } from '../../context/CartContext'
 
 const STEPS = [
@@ -27,7 +26,6 @@ export default function CheckoutPage() {
   const [placing, setPlacing] = useState(false)
 
   const navigate = useNavigate()
-  const { user } = useAuth()
   const { setCartCount } = useCart()
 
   const formatPrice = (price) => `LKR ${Number(price).toLocaleString('en-US')}`

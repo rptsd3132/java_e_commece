@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import api from '../../api/axios'
-import { useAuth } from '../../context/AuthContext'
 import { useCart } from '../../context/CartContext'
 
 export default function CartPage() {
@@ -10,7 +9,6 @@ export default function CartPage() {
   const [loading, setLoading] = useState(true)
 
   const navigate = useNavigate()
-  const { user } = useAuth()
   const { setCartCount } = useCart()
 
   useEffect(() => {

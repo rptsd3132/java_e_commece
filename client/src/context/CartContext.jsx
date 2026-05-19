@@ -34,6 +34,7 @@ export function CartProvider({ children }) {
 
 // Custom hook that any component can use to access cart data
 // This is cleaner than calling useContext(CartContext) directly every time
+// eslint-disable-next-line react-refresh/only-export-components
 export function useCart() {
   const ctx = useContext(CartContext)  // Get the context value from the nearest provider
 

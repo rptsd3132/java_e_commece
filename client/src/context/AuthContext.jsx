@@ -1,5 +1,5 @@
 // Import React hooks needed for context, state, and side effects
-import { createContext, useContext, useState, useEffect } from 'react'
+import { createContext, useContext, useState } from 'react'
 
 // Create a new AuthContext object
 // We pass null as the default value so we can detect if a component is missing the provider
@@ -8,12 +8,15 @@ const AuthContext = createContext(null)
 // AuthProvider component that wraps the app and provides auth state to all children
 export function AuthProvider({ children }) {
   // State to hold the logged-in user's data (name, email, role, etc.)
-  // Starts as null because we don't know if the user is logged in yet
-  const [user, setUser] = useState(null)
+  // Lazy initializer reads from localStorage once on mount to restore session
+  const [user, setUser] = useState(() => {
+    const saved = localStorage.getItem('user')
+    return saved ? JSON.parse(saved) : null
+  })
 
   // State to hold the JWT authentication token
-  // Starts as null and gets set after login or restored from localStorage
-  const [token, setToken] = useState(null)
+  // Lazy initializer reads from localStorage once on mount to restore session
+  const [token, setToken] = useState(() => localStorage.getItem('token'))
 
   // Computed value: true if a token exists, false otherwise
   // This makes it easy for components to check if someone is logged in
@@ -37,19 +40,6 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('user')   // Remove user data from browser storage
   }
 
-  // Effect runs once when the component mounts (page load or refresh)
-  // It checks localStorage for saved auth data and restores the session
-  useEffect(() => {
-    const savedToken = localStorage.getItem('token')  // Get token from storage
-    const savedUser = localStorage.getItem('user')    // Get user data from storage
-
-    // If both token and user data exist, restore them to state
-    if (savedToken && savedUser) {
-      setToken(savedToken)                            // Restore token
-      setUser(JSON.parse(savedUser))                  // Parse JSON string back to object and restore user
-    }
-  }, [])  // Empty dependency array means this runs only once on mount
-
   // Provide all auth values and functions to any component inside this provider
   return (
     <AuthContext.Provider value={{ user, token, isLoggedIn, login, logout }}>
@@ -60,6 +50,7 @@ export function AuthProvider({ children }) {
 
 // Custom hook that any component can use to access auth data
 // This is cleaner than calling useContext(AuthContext) directly every time
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const ctx = useContext(AuthContext)  // Get the context value from the nearest provider
 

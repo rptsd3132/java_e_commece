@@ -370,14 +370,11 @@ export default function ProductDetailPage() {
 
   // Determine stock status and badge styling
   const stockQuantity = product.stockQuantity || 0
-  let stockBadge = null
-  if (stockQuantity === 0) {
-    stockBadge = { text: 'Out of Stock', className: 'bg-red-100 text-red-700' }
-  } else if (stockQuantity <= 10) {
-    stockBadge = { text: `Only ${stockQuantity} left!`, className: 'bg-orange-100 text-orange-700' }
-  } else {
-    stockBadge = { text: 'In Stock', className: 'bg-green-100 text-green-700' }
-  }
+  const stockBadge = stockQuantity === 0
+    ? { text: 'Out of Stock', className: 'bg-red-100 text-red-700' }
+    : stockQuantity <= 10
+    ? { text: `Only ${stockQuantity} left!`, className: 'bg-orange-100 text-orange-700' }
+    : { text: 'In Stock', className: 'bg-green-100 text-green-700' }
 
   // Get all thumbnail images from the product (up to 4)
   const thumbnails = product.images ? product.images.slice(0, 4) : []

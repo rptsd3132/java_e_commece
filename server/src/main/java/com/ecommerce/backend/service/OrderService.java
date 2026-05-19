@@ -4,6 +4,8 @@ import com.ecommerce.backend.dto.order.OrderItemResponse;
 import com.ecommerce.backend.dto.order.OrderResponse;
 import com.ecommerce.backend.dto.order.OrderStatusDto;
 import com.ecommerce.backend.dto.order.PlaceOrderRequest;
+import com.ecommerce.backend.dto.order.SellerDashboardDto;
+import com.ecommerce.backend.dto.order.SellerDashboardDto.RecentOrderDto;
 import com.ecommerce.backend.model.*;
 import com.ecommerce.backend.model.enums.OrderStatus;
 import com.ecommerce.backend.model.enums.PaymentStatus;
@@ -18,9 +20,15 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 public class OrderService {
@@ -268,6 +276,186 @@ public class OrderService {
             ));
         }
         return dtos;
+    }
+
+    /* ==================================================================== */
+    /*  METHOD 6 — getSellerOrders                                          */
+    /* ==================================================================== */
+
+    // Sellers only see orders that contain their products
+    @Transactional(readOnly = true)
+    public Page<OrderResponse> getSellerOrders(Long sellerId, int page, int size) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "placedAt"));
+        Page<Order> orderPage = orderRepository.findByItemsSellerIdOrderByPlacedAtDesc(sellerId, pageable);
+        return orderPage.map(this::toOrderResponse);
+    }
+
+    /* ==================================================================== */
+    /*  METHOD 7 — getOrderByIdForSeller                                    */
+    /* ==================================================================== */
+
+    // Sellers can only view orders that contain their products
+    @Transactional(readOnly = true)
+    public OrderResponse getOrderByIdForSeller(Long orderId, Long sellerId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new RuntimeException("Order not found with id: " + orderId));
+
+        boolean hasSellerItem = orderItemRepository.findByOrderId(orderId).stream()
+                .anyMatch(item -> item.getSeller() != null && item.getSeller().getId().equals(sellerId));
+
+        if (!hasSellerItem) {
+            throw new RuntimeException("You don't have permission to view this order");
+        }
+
+        return toOrderResponse(order);
+    }
+
+    /* ==================================================================== */
+    /*  METHOD 8 — updateOrderStatus                                        */
+    /* ==================================================================== */
+
+    // Sellers can only move status forward, never backwards
+    @Transactional
+    public OrderResponse updateOrderStatus(Long orderId, Long sellerId, OrderStatus newStatus) {
+        // Step 1: Load order
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new RuntimeException("Order not found with id: " + orderId));
+
+        // Step 2: Verify seller has at least one item in this order
+        boolean hasSellerItem = orderItemRepository.findByOrderId(orderId).stream()
+                .anyMatch(item -> item.getSeller() != null && item.getSeller().getId().equals(sellerId));
+
+        if (!hasSellerItem) {
+            throw new RuntimeException("You don't have permission to update this order");
+        }
+
+        // Step 3: Validate status transition direction
+        OrderStatus currentStatus = order.getStatus();
+        if (!isValidForwardTransition(currentStatus, newStatus)) {
+            throw new RuntimeException("Cannot change status from " + currentStatus + " to " + newStatus);
+        }
+
+        // Step 4: Update order status
+        order.setStatus(newStatus);
+        orderRepository.save(order);
+
+        // Step 5: Save new OrderStatusHistory row with changedBy=seller
+        User seller = userRepository.findById(sellerId)
+                .orElseThrow(() -> new RuntimeException("Seller not found with id: " + sellerId));
+
+        OrderStatusHistory history = OrderStatusHistory.builder()
+                .order(order)
+                .status(newStatus)
+                .changedBy(seller)
+                .build();
+        orderStatusHistoryRepository.save(history);
+
+        // Step 6: Return updated OrderResponse
+        return toOrderResponse(order);
+    }
+
+    // Validates that the status transition moves forward only: PENDING → CONFIRMED → SHIPPED → DELIVERED
+    private boolean isValidForwardTransition(OrderStatus current, OrderStatus next) {
+        return switch (current) {
+            case PENDING -> next == OrderStatus.CONFIRMED;
+            case CONFIRMED -> next == OrderStatus.SHIPPED;
+            case SHIPPED -> next == OrderStatus.DELIVERED;
+            default -> false;
+        };
+    }
+
+    /* ==================================================================== */
+    /*  METHOD 9 — getSellerDashboard                                       */
+    /* ==================================================================== */
+
+    /**
+     * Builds the seller dashboard stats:
+     *   - totalOrders: distinct orders where seller has at least one item
+     *   - pendingOrders: distinct orders with status PENDING or CONFIRMED
+     *   - totalProducts: count of products owned by this seller
+     *   - revenueThisMonth: SUM of line_total for current calendar month
+     *   - revenueTotal: SUM of line_total for all time
+     *   - recentOrders: last 5 orders with customer name, seller's share, status, date
+     */
+    @Transactional(readOnly = true)
+    public SellerDashboardDto getSellerDashboard(Long sellerId) {
+
+        // Total distinct orders where this seller has items
+        long totalOrders = orderRepository.countDistinctByItemsSellerId(sellerId);
+
+        // Distinct orders with PENDING or CONFIRMED status
+        long pendingOrders = orderRepository.countDistinctByItemsSellerIdAndStatusIn(
+                sellerId, List.of(OrderStatus.PENDING, OrderStatus.CONFIRMED)
+        );
+
+        // Total products owned by this seller
+        long totalProducts = productRepository.countBySellerId(sellerId);
+
+        // Total lifetime revenue: SUM of line_total for all seller's order items
+        BigDecimal revenueTotal = orderItemRepository.sumLineTotalBySellerId(sellerId);
+
+        // Monthly revenue: SUM of line_total for items where order placed in current month
+        // Calculate start and end of current month in system timezone, then convert to OffsetDateTime
+        LocalDate now = LocalDate.now(ZoneId.systemDefault());
+        LocalDate firstDayOfMonth = now.withDayOfMonth(1);
+        LocalDate lastDayOfMonth = now.withDayOfMonth(now.lengthOfMonth());
+
+        // Convert to OffsetDateTime at start/end of day with system default offset
+        OffsetDateTime monthStart = firstDayOfMonth.atStartOfDay()
+                .atOffset(ZoneOffset.systemDefault().getRules().getOffset(now.atStartOfDay()));
+        OffsetDateTime monthEnd = lastDayOfMonth.atTime(LocalTime.MAX)
+                .atOffset(ZoneOffset.systemDefault().getRules().getOffset(lastDayOfMonth.atStartOfDay()));
+
+        BigDecimal revenueThisMonth = orderItemRepository.sumLineTotalBySellerIdAndOrderPlacedAtBetween(
+                sellerId, monthStart, monthEnd
+        );
+
+        // Recent orders: fetch top 5 most recent order items, then deduplicate by order
+        // and aggregate the seller's share per order
+        List<OrderItem> recentItems = orderItemRepository.findTop5BySellerIdOrderByOrderPlacedAtDesc(sellerId);
+
+        // Use a LinkedHashMap to preserve insertion order while deduplicating by order ID
+        Map<Long, RecentOrderDto> recentOrdersMap = new LinkedHashMap<>();
+        for (OrderItem item : recentItems) {
+            Long orderId = item.getOrder().getId();
+            if (!recentOrdersMap.containsKey(orderId)) {
+                // First time seeing this order — create the DTO entry
+                String customerName = item.getOrder().getCustomer().getFirstName()
+                        + " " + item.getOrder().getCustomer().getLastName();
+                String status = item.getOrder().getStatus().name();
+                LocalDateTime date = item.getOrder().getPlacedAt() != null
+                        ? item.getOrder().getPlacedAt().atZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime()
+                        : null;
+
+                recentOrdersMap.put(orderId, new RecentOrderDto(
+                        orderId, customerName, item.getLineTotal(), status, date
+                ));
+            } else {
+                // Order already in map — add this item's line_total to the existing total
+                RecentOrderDto existing = recentOrdersMap.get(orderId);
+                recentOrdersMap.put(orderId, new RecentOrderDto(
+                        existing.id(),
+                        existing.customerName(),
+                        existing.total().add(item.getLineTotal()),
+                        existing.status(),
+                        existing.date()
+                ));
+            }
+        }
+
+        // Take only the first 5 unique orders
+        List<RecentOrderDto> recentOrders = recentOrdersMap.values().stream()
+                .limit(5)
+                .collect(Collectors.toList());
+
+        return new SellerDashboardDto(
+                totalOrders,
+                pendingOrders,
+                totalProducts,
+                revenueThisMonth,
+                revenueTotal,
+                recentOrders
+        );
     }
 
     /* ==================================================================== */
